@@ -15,6 +15,20 @@ mod setup;
 
 use config::{BuildConfig, SbpfArch};
 
+/// The `cargo build` every invocation starts from: the program's build, the
+/// unit graph the builtins' profile is read from, and the builtins' own build.
+/// Sharing it keeps the builtins in step with whatever the program's build
+/// accepts.
+const CARGO_BUILD: [&str; 7] = [
+    "+nightly",
+    "build",
+    "--release",
+    "--target",
+    "bpfel-unknown-none",
+    "-Z",
+    "build-std=core,alloc",
+];
+
 const SOLANA_COMPILER_BUILTINS_SYMBOLS: &str = concat!(
     "__multi3,",
     "__adddf3,__subdf3,__negdf2,__muldf3,__divdf3,",
@@ -138,13 +152,7 @@ fn main() -> Result<ExitCode> {
     }
     command.env("PATH", env::join_paths(paths)?);
     command
-        .arg("+nightly")
-        .arg("build")
-        .arg("--release")
-        .arg("--target")
-        .arg("bpfel-unknown-none")
-        .arg("-Z")
-        .arg("build-std=core,alloc")
+        .args(CARGO_BUILD)
         // Cargo merges these after any rustflags from Cargo config, and before
         // any `--config` passed through below.
         .arg("--config")

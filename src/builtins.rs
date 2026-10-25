@@ -213,16 +213,8 @@ struct UnitTarget {
 /// `CARGO_PROFILE_*` and `--profile` all count. Nothing is built.
 fn std_profile(cargo: &OsStr, cargo_args: &[OsString]) -> Result<Profile> {
     let output = Command::new(cargo)
-        .arg("+nightly")
-        .arg("build")
-        .arg("--release")
-        .arg("--target")
-        .arg("bpfel-unknown-none")
-        .arg("-Z")
-        .arg("build-std=core,alloc")
-        .arg("-Z")
-        .arg("unstable-options")
-        .arg("--unit-graph")
+        .args(crate::CARGO_BUILD)
+        .args(["-Z", "unstable-options", "--unit-graph"])
         .args(cargo_args)
         .output()
         .context("failed to read Cargo's unit graph")?;
@@ -348,14 +340,8 @@ fn build(
     })?;
 
     let mut child = Command::new(cargo)
-        .arg("+nightly")
-        .arg("build")
-        .arg("--release")
+        .args(crate::CARGO_BUILD)
         .arg("--lib")
-        .arg("--target")
-        .arg("bpfel-unknown-none")
-        .arg("-Z")
-        .arg("build-std=core,alloc")
         .arg("--message-format=json-render-diagnostics")
         .arg("--manifest-path")
         .arg(package.join("Cargo.toml"))
