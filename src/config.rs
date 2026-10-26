@@ -59,8 +59,24 @@ impl BuildConfig {
 
         let config = fs::read_to_string(&path)
             .with_context(|| format!("failed to read {}", path.display()))?;
+        let document = config
+            .parse::<toml_edit::DocumentMut>()
+            .with_context(|| format!("failed to parse {}", path.display()))?;
+        // The SBPF rustflags are an array, and Cargo can't merge an array into
+        // rustflags written as a string.
+        if document
+            .get("target")
+            .and_then(|target| target.get("bpfel-unknown-none"))
+            .and_then(|target| target.get("rustflags"))
+            .is_some_and(toml_edit::Item::is_str)
+        {
+            bail!(
+                "{} sets `target.bpfel-unknown-none.rustflags` as a string, which Cargo can't merge with the SBPF rustflags; write it as an array, like `rustflags = [\"-C\", \"...\"]`",
+                path.display()
+            );
+        }
         let cargo_config: cargo_config2::de::Config =
-            toml_edit::de::from_str(&config).with_context(|| {
+            toml_edit::de::from_document(document).with_context(|| {
                 format!("invalid Cargo config in {}", path.display())
             })?;
         let rustflags = cargo_config
@@ -176,7 +192,7 @@ mod tests {
     }
 
     #[test]
-    fn loads_string_rustflags_and_rejects_conflicts() {
+    fn loads_rustflags_and_rejects_conflicts() {
         let root = env::temp_dir().join(format!(
             "cargo-build-sbpf-config-test-{}-{}",
             std::process::id(),
@@ -190,7 +206,7 @@ mod tests {
         fs::write(
             project.join(".cargo/config.toml"),
             r#"[target.bpfel-unknown-none]
-rustflags = "-C link-arg=--arch=v0 -C link-arg=--llvm-args=-bpf-stack-size=8192"
+rustflags = ["-C", "link-arg=--arch=v0", "-C", "link-arg=--llvm-args=-bpf-stack-size=8192"]
 "#,
         )
         .unwrap();
@@ -202,11 +218,20 @@ rustflags = "-C link-arg=--arch=v0 -C link-arg=--llvm-args=-bpf-stack-size=8192"
         fs::write(
             project.join(".cargo/config.toml"),
             r#"[target.bpfel-unknown-none]
-rustflags = "-C link-arg=--llvm-args=-bpf-stack-size=8192"
+rustflags = ["-C", "link-arg=--llvm-args=-bpf-stack-size=8192"]
 "#,
         )
         .unwrap();
         let cli_only = BuildConfig::load(Some(SbpfArch::V0), false);
+        // Cargo can't merge the SBPF rustflags into a string.
+        fs::write(
+            project.join(".cargo/config.toml"),
+            r#"[target.bpfel-unknown-none]
+rustflags = "-C link-arg=--llvm-args=-bpf-stack-size=8192"
+"#,
+        )
+        .unwrap();
+        let string_form = BuildConfig::load(None, false);
         // Without a stack size there is nothing to do: the build supplies it.
         fs::write(project.join(".cargo/config.toml"), "[net]\nretry = 3\n")
             .unwrap();
@@ -234,6 +259,8 @@ rustflags = ["-C", "link-arg=--llvm-args=-bpf-stack-size=8192"]
         let (cli_only, cargo_config) = cli_only.unwrap();
         assert_eq!(cli_only.arch, SbpfArch::V0);
         assert!(!cargo_config.unwrap().has_arch);
+        let error = string_form.err().unwrap().to_string();
+        assert!(error.contains("as a string"), "{error}");
         assert!(!unrelated.unwrap().1.unwrap().has_arch);
         assert_eq!(mismatched.unwrap().0.stack_size(), 4096);
         assert_eq!(after, mismatched_config);

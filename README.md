@@ -49,7 +49,12 @@ on `PATH`.
 
 The SBPF rustflags are always passed through Cargo's `--config`. Cargo merges
 them after any `target.bpfel-unknown-none.rustflags` from Cargo config, and
-before rustflags from any `--config` passed through to `cargo build`.
+before rustflags from any `--config` passed through to `cargo build`. For that
+to work, rustflags in Cargo config must be an array, and `RUSTFLAGS` and
+`CARGO_ENCODED_RUSTFLAGS` must be unset: while either is set, Cargo ignores all
+rustflags from Cargo config. To add rustflags from the environment, use
+`CARGO_TARGET_BPFEL_UNKNOWN_NONE_RUSTFLAGS` instead: it applies only to SBPF
+builds, and Cargo merges it with the rest.
 
 ## Compiler builtins
 

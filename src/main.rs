@@ -5,7 +5,7 @@ use std::{
     process::{Command, ExitCode},
 };
 
-use anyhow::Result;
+use anyhow::{bail, Result};
 use clap::Parser;
 use toml_edit::Array;
 
@@ -77,6 +77,16 @@ fn main() -> Result<ExitCode> {
         simd_0460,
         cargo_args,
     }) = CargoCli::parse();
+
+    // The SBPF rustflags reach Cargo through Cargo config, which Cargo ignores
+    // entirely while either of these is set, even to an empty value.
+    for var in ["RUSTFLAGS", "CARGO_ENCODED_RUSTFLAGS"] {
+        if env::var_os(var).is_some() {
+            bail!(
+                "{var} is set, so Cargo would ignore the SBPF rustflags cargo-build-sbpf passes through Cargo config; unset it, or move its flags to CARGO_TARGET_BPFEL_UNKNOWN_NONE_RUSTFLAGS, which Cargo merges with them"
+            );
+        }
+    }
 
     let (build_config, cargo_config) = BuildConfig::load(arch, simd_0460)?;
     let cargo = OsString::from("cargo");
