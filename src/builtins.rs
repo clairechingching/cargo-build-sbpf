@@ -30,7 +30,7 @@ use std::{
     collections::hash_map::DefaultHasher,
     env,
     ffi::{OsStr, OsString},
-    fs::{self, File},
+    fs::{self, File, TryLockError},
     hash::{Hash as _, Hasher as _},
     io::BufReader,
     path::{Path, PathBuf},
@@ -89,7 +89,18 @@ pub(crate) fn ensure(
     fs::create_dir_all(&cache)
         .with_context(|| format!("failed to create {}", cache.display()))?;
     let lock = File::create(cache.join(".lock"))
-        .and_then(|lock| lock.lock().map(|()| lock))
+        .and_then(|lock| {
+            match lock.try_lock() {
+                Err(TryLockError::WouldBlock) => {
+                    eprintln!(
+                        "waiting for another cargo build-sbpf to build {CRATE}"
+                    );
+                    lock.lock()?;
+                }
+                result => result?,
+            }
+            Ok(lock)
+        })
         .with_context(|| format!("failed to lock {}", cache.display()))?;
     if !artifact.is_file() {
         eprintln!("building {CRATE} {identity} for the SBPF toolchain");
