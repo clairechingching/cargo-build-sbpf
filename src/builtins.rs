@@ -30,7 +30,7 @@ use std::{
     collections::hash_map::DefaultHasher,
     env,
     ffi::{OsStr, OsString},
-    fs,
+    fs::{self, File},
     hash::{Hash as _, Hasher as _},
     io::BufReader,
     path::{Path, PathBuf},
@@ -84,8 +84,18 @@ pub(crate) fn ensure(
         return Ok(artifact);
     }
 
-    eprintln!("building {CRATE} {identity} for the SBPF toolchain");
-    build(cargo, &package, &cache, &rustflags)?;
+    // Another `cargo build-sbpf` may be building this entry right now; wait
+    // for it rather than build into the directory it is about to remove.
+    fs::create_dir_all(&cache)
+        .with_context(|| format!("failed to create {}", cache.display()))?;
+    let lock = File::create(cache.join(".lock"))
+        .and_then(|lock| lock.lock().map(|()| lock))
+        .with_context(|| format!("failed to lock {}", cache.display()))?;
+    if !artifact.is_file() {
+        eprintln!("building {CRATE} {identity} for the SBPF toolchain");
+        build(cargo, &package, &cache, &rustflags)?;
+    }
+    drop(lock);
 
     if !artifact.is_file() {
         bail!("built {CRATE} but no rlib landed in {}", cache.display());
@@ -413,7 +423,7 @@ fn cache_root() -> Result<PathBuf> {
         .join("sbpf-compiler-builtins"))
 }
 
-/// Builds the package into `cache` and keeps the dependency's rlib.
+/// Builds the package into `cache` and keeps only the dependency's rlib.
 fn build(
     cargo: &OsStr,
     package: &Path,
@@ -468,10 +478,23 @@ fn build(
     let rlib = rlib
         .with_context(|| format!("cargo built {CRATE} but no rlib found"))?;
 
+    // Staged and renamed, so a build-sbpf that checks for the artifact without
+    // the lock never sees it half-written.
     let artifact = cache.join("libsolana_compiler_builtins.rlib");
-    fs::copy(&rlib, &artifact).with_context(|| {
-        format!("failed to copy {rlib} to {}", artifact.display())
-    })?;
+    let staged = target_dir.join("libsolana_compiler_builtins.rlib");
+    fs::copy(&rlib, &staged)
+        .and_then(|_| fs::rename(&staged, &artifact))
+        .with_context(|| {
+            format!("failed to copy {rlib} to {}", artifact.display())
+        })?;
+
+    // Everything else, the build of core and alloc included, is never reused.
+    if let Err(error) = fs::remove_dir_all(&target_dir) {
+        eprintln!(
+            "warning: failed to remove {}: {error}",
+            target_dir.display()
+        );
+    }
     Ok(())
 }
 
